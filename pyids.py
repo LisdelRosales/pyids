@@ -1,12 +1,26 @@
 import sys
 import os
-import time
+import socket
 from scapy.all import sniff, IP, TCP
 import pandas as pd
 from datetime import datetime
 from collections import defaultdict
 
-#Primero verificamos argumentos
+# Obtenemos IP local
+def obtener_ip_local():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip_local = s.getsockname()[0]
+        s.close()
+        return ip_local
+    except:
+        return "127.0.0.1"
+
+ip_local = obtener_ip_local()
+print(f"[+] IP local detectada: {ip_local}")
+
+# Verificamos argumentos
 if len(sys.argv) != 2:
     print("Uso: python pyids.py <tiempo_en_segundos>")
     sys.exit(1)
@@ -52,10 +66,18 @@ def analizar_paquete(pkt):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         servicio = puertos_servicios.get(puerto_destino, "Desconocido")   #Si es TCP miramos a que puerto intenta conectarse y usamos el diccionario puertos_servivios
 
+        # Clasificación del tráfico
+        if ip_origen == ip_local:
+            direccion = "OUTBOUND"
+        elif ip_destino == ip_local:
+            direccion = "INBOUND"
+        else:
+            direccion = "EXTERNO/LATERAL"
+
         alerta = None   # Creo variable para guardar una alerta si se detecta algo relevante
 
         # Detectar tráfico sospechoso o clasificado
-        if TCP in pkt and pkt[TCP].flags == "S":   #Detecta si es un paquete con flag SYN activado (intento de establecer conexión), Como con Nmap
+        if TCP in pkt and pkt[TCP].flags == "S":
             registro_syn[ip_origen].append(datetime.now())
             registro_syn[ip_origen] = [
                 t for t in registro_syn[ip_origen]
@@ -64,10 +86,10 @@ def analizar_paquete(pkt):
             if len(registro_syn[ip_origen]) > umbral_syn:
                 alerta = f"SYN Flood detectado ({len(registro_syn[ip_origen])} SYNs en 10s)"
             else:
-                alerta = "Conexión TCP (SYN)"  # Guardar cada intento SYN que viene de una IP. Mantener solo los últimos 10 segundos.Si hay más de 30 en ese tiempo probable ataque de SYN Flood
+                alerta = "Conexión TCP (SYN)"
 
         elif servicio != "Desconocido":
-            alerta = f"Tráfico identificado como {servicio}"  #Si no es un SYN, pero va a un puerto conocido
+            alerta = f"Tráfico identificado como {servicio}"
 
         if alerta:
             eventos.append({
@@ -76,6 +98,7 @@ def analizar_paquete(pkt):
                 "dest_ip": ip_destino,
                 "protocol": proto,
                 "service": servicio,
+                "direction": direccion,
                 "alert": alerta
             })   #Guardamos todos los datos relevantes en un diccionario y lo añadimos a la lista eventos que luego exportaremos al CSV.
 

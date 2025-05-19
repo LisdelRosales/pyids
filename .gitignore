@@ -1,3 +1,4 @@
 # Ignorar archivos de resultados
 /logs/
 *.csv
+prueba.py
